@@ -1,0 +1,199 @@
+#!/usr/bin/python
+import os, sys
+
+if len(sys.argv)==2:
+	if '--help'==sys.argv[1]:
+		print
+		print 'usage: catalog [-acfglrst123] [directory ...]'
+		print
+		print '       -a = all files'
+		print '       -c = case-sensitive sort'
+		print '       -f = number of files'
+		print '       -l = follow links'
+		print '       -r = reverse sort order'
+		print '       -t = compute total folder sizes'
+		print
+		print '       -g = order by number of files'
+		print '       -s = order by size (supercedes -g)'
+		print
+		print '       -1 = show only the top ten'
+		print '       -2 = show only the top twenty'
+		print '       -3 = show only the top thirty'
+		print
+		sys.exit(0)
+
+problems = []
+flags = []
+directories = []
+
+for possibleFlag in sys.argv[1:]:
+	if '-'==possibleFlag[0]:
+		for flag in possibleFlag[1:]:
+			if flag not in flags:
+				flags.append(flag)
+	else:
+		directories.append(possibleFlag)
+
+if len(directories)==0:
+	directories = '.'
+
+allFiles       = 'a' in flags
+caseSensitive  = 'c' in flags
+numberOfFiles  = 'f' in flags
+orderByNumber  = 'g' in flags
+followingLinks = 'l' in flags
+reverseSort    = 'r' in flags
+orderBySize    = 's' in flags
+totalSize      = 't' in flags
+topTen         = '1' in flags
+topTwenty      = '2' in flags
+topThirty      = '3' in flags
+
+def colorize(code):
+	return "\033[0;" + str(code) + "m"
+
+color = {
+	'underline' : colorize(4),
+	'red' 		: colorize(31),
+	'green' 	: colorize(32),
+	'yellow'	: colorize(33),
+	'blue' 		: colorize(34),
+	'violet' 	: colorize(35),
+	'cyan' 		: colorize(36),
+	'normal' 	: colorize(37),
+	'blackback' : colorize(40),
+	'grey' 		: colorize(90),
+	'white' 	: colorize(97),
+}
+
+print color['normal']
+
+suffixes = [ ("B", 2**10), ("k", 2**20), ("M", 2**30), ("G", 2**40), ("T", 2**50) ]
+
+color_codes = { "k" : color['cyan'], "M" : color['yellow'], "G" : color['red'], "T" : color['violet'] }
+color_counts = { 10 : color['cyan'], 100 : color['yellow'], 1000 : color['red'], 10000 : color['violet'] }
+
+def folderCount(fullpath):
+	count = 0
+	for (path, dirs, files) in os.walk(fullpath):
+		for file in files:
+			count += 1
+	return count
+
+def folderSize(fullpath):
+	try:
+		size = 0
+		for (path, dirs, files) in os.walk(fullpath):
+			for file in files:
+				filename = os.path.join(path, file)
+				if not os.path.isdir(filename) and (followingLinks or not os.path.islink(filename)):
+					size += os.path.getsize(filename)
+		return size
+	except:
+		problems.append("\tUnexpected error for " + color['cyan'] + fullpath + color['normal'] + ": " + color['red'] + str(sys.exc_info()[0]) + color['normal'])
+		return 0
+
+def prettySize(size):
+	if not totalSize:
+		return ""
+	
+	for suf, lim in suffixes:
+		if size > lim:
+			continue
+		else:
+			if suf=='B':
+				return color['blue'] + ("%7i%s" % (int(size / float(lim/2**10)), suf)) + color['normal']
+			else:
+				return color_codes[suf] + ("%7.2f%s" % (round(size / float(lim/2**10), 2), suf)) + color['normal']
+
+def prettyCount(count):
+	for threshold in sorted(color_counts, reverse=True):
+		if threshold < count:
+			return color_counts[threshold] + ("%7.0f" % count) + color['normal']
+	return "%7.0f" % count
+
+output = []
+for directory in directories:
+	try:
+		if followingLinks or not os.path.islink(directory):
+			directoryIsDirectory = True
+			if not os.path.isdir(directory):
+				filelist = [ directory ]
+				directoryIsDirectory = False
+			else:
+				if allFiles:
+					filelist = os.listdir(directory)
+				else:
+					filelist = [ filename for filename in os.listdir(directory) if filename[0]!='.' ]
+		
+			for file in filelist:
+				if directoryIsDirectory:
+					fullpath = directory + '/' + file
+				else:
+					fullpath = file
+				
+				if followingLinks or not os.path.islink(fullpath):
+					size = os.path.getsize(fullpath)
+					isExecutable = os.access(fullpath, os.X_OK)
+					isDirectory = os.path.isdir(fullpath)
+					
+					if ('.app'==file[-4:] and os.access(fullpath + '/Contents/MacOS/' + file[:-4], os.X_OK)):
+						fileString = color['blackback'] + file + color['normal'] + color['green'] + ' *' + color['normal']
+						size = folderSize(fullpath)
+					elif isDirectory:
+						fileString = color['green'] + file + color['normal'] + '/'
+						if totalSize:
+							size = folderSize(fullpath)
+					elif isExecutable:
+						fileString = color['blackback'] + file + color['normal'] + color['green'] + ' *' + color['normal']
+					else:
+						fileString = color['white'] + file + color['normal']
+					
+					if numberOfFiles:
+						fc = folderCount(fullpath)
+						if not isDirectory:
+							fc = 1
+						printString = "\t%s  %s  %s" % (prettySize(size), prettyCount(fc), fileString)
+					else:
+						printString = "\t%s  %s" % (prettySize(size), fileString)
+					
+					if orderBySize:
+						output.append((size, printString))
+					elif numberOfFiles:
+						if isDirectory and orderByNumber:
+							output.append((fc, printString))
+						else:
+							output.append((0, printString))
+					else:
+						output.append((file, printString))
+			
+	except:
+		#print "Unexpected error:", sys.exc_info()[0]
+		print color['normal']+'Directory ' + color['underline'] + directory + color['normal'] + ' doesn\'t exist'
+
+reverseValue = False
+if orderBySize: reverseValue = True
+if reverseSort: reverseValue = not reverseValue
+
+if caseSensitive or orderBySize:
+	outputSort = sorted(output, key=lambda x:(x[0], x[1]), reverse=reverseValue)
+elif numberOfFiles:
+	outputSort = sorted(output, key=lambda x:(x[0], x[1]), reverse=not reverseValue)
+else:
+	outputSort = sorted(output, key=lambda x:(x[0].lower(), x[1].lower()), reverse=reverseValue)
+
+if topTen:
+	outputSort = outputSort[:10]
+elif topTwenty:
+	outputSort = outputSort[:20]
+elif topThirty:
+	outputSort = outputSort[:30]
+
+for out in outputSort:
+	print out[1]
+print
+
+if (len(problems)>0):
+	for problem in problems:
+		print problem
+	print
